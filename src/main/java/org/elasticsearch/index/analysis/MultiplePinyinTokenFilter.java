@@ -20,18 +20,14 @@ package org.elasticsearch.index.analysis;
 import org.apache.lucene.analysis.TokenFilter;
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
-import org.apache.lucene.analysis.tokenattributes.OffsetAttribute;
 import org.apache.lucene.analysis.tokenattributes.PositionIncrementAttribute;
 import org.elasticsearch.analysis.PinyinConfig;
 import org.nlpcn.commons.lang.pinyin.Pinyin;
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.List;
+import java.util.*;
 
-public class PinyinTokenFilter extends TokenFilter {
+public class MultiplePinyinTokenFilter extends TokenFilter {
 
     private final CharTermAttribute termAtt = addAttribute(CharTermAttribute.class);
     private boolean done = true;
@@ -47,14 +43,14 @@ public class PinyinTokenFilter extends TokenFilter {
     private HashSet<String> termsFilter;
 
     protected int candidateOffset = 0;
-    StringBuilder firstLetters;
-    StringBuilder fullPinyinLetters;
+    List<StringBuilder> firstLetters;
+    List<StringBuilder> fullPinyinLetters;
     String source;
     private int lastIncrementPosition = 0;
 
     private PositionIncrementAttribute positionAttr = addAttribute(PositionIncrementAttribute.class);
 
-    public PinyinTokenFilter(TokenStream in, PinyinConfig config) {
+    public MultiplePinyinTokenFilter(TokenStream in, PinyinConfig config) {
         super(in);
         this.config = config;
         //validate config
@@ -62,9 +58,9 @@ public class PinyinTokenFilter extends TokenFilter {
             throw new ConfigErrorException("pinyin config error, can't disable separate_first_letter, first_letter and full_pinyin at the same time.");
         }
         candidate = new ArrayList<>();
-        firstLetters = new StringBuilder();
+        firstLetters = new LinkedList<StringBuilder>();
         termsFilter = new HashSet<>();
-        fullPinyinLetters = new StringBuilder();
+        fullPinyinLetters = new LinkedList<StringBuilder>();
     }
 
     //TODO refactor, merge code
@@ -96,7 +92,7 @@ public class PinyinTokenFilter extends TokenFilter {
                 source = source.trim();
             }
 
-            List<String> pinyinList = Pinyin.pinyin(source);
+            List<String> pinyinList = Pinyin.multiplePinyin(source);
             if (pinyinList.size() == 0) return false;
 
             StringBuilder buff = new StringBuilder();
@@ -124,10 +120,22 @@ public class PinyinTokenFilter extends TokenFilter {
                             }
                         }
                         if (config.keepNoneChineseInFirstLetter) {
-                            firstLetters.append(c);
+                            if (firstLetters.size() == 0) {
+                                firstLetters.add(new StringBuilder(c+""));
+                            } else {
+                                for (int j=0; j<firstLetters.size();j++) {
+                                    firstLetters.get(j).append(c);
+                                }
+                            }
                         }
                         if (config.keepNoneChineseInJoinedFullPinyin) {
-                            fullPinyinLetters.append(c);
+                            if (fullPinyinLetters.size() == 0) {
+                                fullPinyinLetters.add(new StringBuilder(c+""));
+                            } else {
+                                for (StringBuilder fullPinyinLetter: fullPinyinLetters) {
+                                    fullPinyinLetter.append(c);
+                                }
+                            }
                         }
                     }
                 } else {
@@ -138,8 +146,36 @@ public class PinyinTokenFilter extends TokenFilter {
 
                     String pinyin = pinyinList.get(i);
                     if (pinyin != null && pinyin.length() > 0) {
+                        String[] pingyinList = pinyin.split(" ");
                         position++;
-                        firstLetters.append(pinyin.charAt(0));
+                        if (firstLetters.size() == 0) {
+                            if (pingyinList.length > 1) {
+                                for (String py: pingyinList) {
+                                    firstLetters.add(new StringBuilder(py.substring(0, 1)));
+                                }
+                            }
+                            else {
+                                firstLetters.add(new StringBuilder(pinyin.substring(0, 1)));
+                            }
+                        } else {
+                            if (pingyinList.length > 1) {
+                                int lettersSize = firstLetters.size();
+                                for (int j=0; j<lettersSize;j++) {
+                                    String letter = firstLetters.get(j).toString();
+                                    for (String py: pingyinList) {
+                                        firstLetters.add(new StringBuilder(letter + py.substring(0, 1)));
+                                    }
+                                }
+
+                                for (int j =0; j< lettersSize; j++) {
+                                    firstLetters.remove(lettersSize-j-1);
+                                }
+                            } else {
+                                for (int j=0; j<firstLetters.size();j++) {
+                                    firstLetters.get(j).append(pinyin.charAt(0));
+                                }
+                            }
+                        }
                         if (config.keepSeparateFirstLetter & pinyin.length() > 1) {
                             addCandidate(new TermItem(String.valueOf(pinyin.charAt(0)), i, i + 1, position));
                         }
@@ -147,7 +183,33 @@ public class PinyinTokenFilter extends TokenFilter {
                             addCandidate(new TermItem(pinyin, i, i + 1, position));
                         }
                         if (config.keepJoinedFullPinyin) {
-                            fullPinyinLetters.append(pinyin);
+                            if (fullPinyinLetters.size() == 0) {
+                                if (pingyinList.length > 1) {
+                                    for (String py: pingyinList) {
+                                        fullPinyinLetters.add(new StringBuilder(py));
+                                    }
+                                } else {
+                                    fullPinyinLetters.add(new StringBuilder(pingyinList[0]));
+                                }
+                            } else {
+                                if (pingyinList.length > 1) {
+                                    int fullPinyinSize = fullPinyinLetters.size();
+                                    for (int j=0; j<fullPinyinSize;j++) {
+                                        String letter = fullPinyinLetters.get(j).toString();
+                                        for (String py: pingyinList) {
+                                            fullPinyinLetters.add(new StringBuilder(letter + py));
+                                        }
+                                    }
+
+                                    for (int j =0; j< fullPinyinSize; j++) {
+                                        fullPinyinLetters.remove(fullPinyinSize-j-1);
+                                    }
+                                } else {
+                                    for (int j=0; j<fullPinyinLetters.size();j++) {
+                                        fullPinyinLetters.get(j).append(pingyinList[0]);
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -168,26 +230,30 @@ public class PinyinTokenFilter extends TokenFilter {
             addCandidate(new TermItem(source, 0, source.length(), 1));
         }
 
-        if (config.keepJoinedFullPinyin && !processedFullPinyinLetter && fullPinyinLetters.length() > 0) {
+        if (config.keepJoinedFullPinyin && !processedFullPinyinLetter && fullPinyinLetters.size() > 0) {
             processedFullPinyinLetter = true;
-            addCandidate(new TermItem(fullPinyinLetters.toString(), 0, source.length(), 1));
-            fullPinyinLetters.setLength(0);
+            for (StringBuilder fullPinyinLetter: fullPinyinLetters) {
+                addCandidate(new TermItem(fullPinyinLetter.toString(), 0, source.length(), 1));
+            }
+            fullPinyinLetters.clear();
         }
 
 
-        if (config.keepFirstLetter && firstLetters.length() > 0 && !processedFirstLetter) {
+        if (config.keepFirstLetter && firstLetters.size() > 0 && !processedFirstLetter) {
             processedFirstLetter = true;
-            String fl;
-            if (firstLetters.length() > config.LimitFirstLetterLength && config.LimitFirstLetterLength > 0) {
-                fl = firstLetters.substring(0, config.LimitFirstLetterLength);
-            } else {
-                fl = firstLetters.toString();
-            }
-            if (config.lowercase) {
-                fl = fl.toLowerCase();
-            }
-            if (!(config.keepSeparateFirstLetter && fl.length() <= 1)) {
-                addCandidate(new TermItem(fl, 0, fl.length(), 1));
+            for (StringBuilder firstLetter: firstLetters) {
+                String fl;
+                if (firstLetter.length() > config.LimitFirstLetterLength && config.LimitFirstLetterLength > 0) {
+                    fl = firstLetter.substring(0, config.LimitFirstLetterLength);
+                } else {
+                    fl = firstLetter.toString();
+                }
+                if (config.lowercase) {
+                    fl = fl.toLowerCase();
+                }
+                if (!(config.keepSeparateFirstLetter && fl.length() <= 1)) {
+                    addCandidate(new TermItem(fl, 0, fl.length(), 1));
+                }
             }
         }
 
@@ -312,8 +378,8 @@ public class PinyinTokenFilter extends TokenFilter {
         this.processedFirstLetter = false;
         this.processedFullPinyinLetter = false;
         this.processedOriginal = false;
-        firstLetters.setLength(0);
-        fullPinyinLetters.setLength(0);
+        firstLetters.clear();
+        fullPinyinLetters.clear();
         source = null;
         candidateOffset = 0;
         termsFilter.clear();
