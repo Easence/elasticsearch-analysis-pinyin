@@ -80,7 +80,7 @@ public class PinyinTokenizer extends Tokenizer {
 
         //remove same term, regardless position
         if (config.removeDuplicateTerm) {
-             fr=term;
+            fr=term;
         }
 
         if (termsFilter.contains(fr)) {
